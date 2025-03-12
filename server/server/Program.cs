@@ -10,7 +10,7 @@ namespace server
 {
     internal class Program
     {
-        List<TcpClient> clients = new List<TcpClient>();
+        static List<TcpClient> clients = new List<TcpClient>();
 
         static void Main()
         {

@@ -10,69 +10,106 @@ namespace server
 {
     internal class Gioco
     {
-        public Gioco(TcpClient[] players)
+        Dictionary<string, Func<string, Task>> actions = new Dictionary<string, Func<string, Task>>
         {
-            if(players.Lenght == 2)
+            //{ "aaa", a },
+        };
+
+        Player[] players = new Player[2];
+        Ball ball = new Ball();
+        public Gioco(TcpClient[] clients)
+        {
+            if(clients.Length == 2)
             {
+                players[0] = new Player(clients[0], 0);
+                players[1] = new Player(clients[1], 1);
                 Task.Run(() => HandleClient(players[0]));
                 Task.Run(() => HandleClient(players[1]));
+                AggiornaPlayers();
             }
         }
-        void Read(NetworkStream stream)
-        {
-
-        }
-        void Write(NetworkStream stream)
-        {
-
-        }
-        void HandleClient(TcpClient client)
+        void Write(NetworkStream stream, string messageString)
         {
             try
             {
-                NetworkStream stream = client.GetStream();
-                byte[] buffer = new byte[1024];
+                byte[] messageByte = System.Text.Encoding.UTF8.GetBytes(messageString);
+
+                int length = messageByte.Length;
+                byte[] lengthByte = BitConverter.GetBytes(length);
+
+                stream.Write(lengthByte, 0, 4);
+                stream.Write(messageByte, 0, messageByte.Length);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Errore nell'invio del messaggio {messageString}: " + ex.Message);
+            }
+        }
+        void HandleClient(Player player)
+        {
+            try
+            {
+                NetworkStream stream = player.client.GetStream();
+
+                Write(stream, player.n.ToString());
 
                 while (true)
                 {
-                    int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                    if (bytesRead == 0) break; // Il client ha chiuso la connessione
+                    byte[] lunghezzaBytes = new byte[4];
+                    stream.Read(lunghezzaBytes, 0, 4);
 
-                    string receivedData = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                    Console.WriteLine("Messaggio ricevuto: " + receivedData);
+                    int lunghezza = BitConverter.ToInt32(lunghezzaBytes, 0); // Converte i byte in int
+                    byte[] dati = new byte[lunghezza];
 
-                    // Risponde al client
-                    string response = "Ricevuto: " + receivedData;
-                    byte[] responseData = Encoding.UTF8.GetBytes(response);
-                    stream.Write(responseData, 0, responseData.Length);
+                    // Assicura di leggere tutto il messaggio
+                    int letti = 0;
+                    while (letti < lunghezza)
+                        letti += stream.Read(dati, letti, lunghezza - letti);
+
+                    string message = Encoding.UTF8.GetString(dati);
+                    AvviaAzione(message.Substring(0, 3), message.Substring(3));
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine("Errore: " + ex.Message);
             }
-            finally
-            {
-                client.Close();
-                Console.WriteLine("Client disconnesso.");
-            }
         }
-        void AvviaAzione(string chiave, object parametro)
+        async Task AvviaAzione(string chiave, string parametro)
         {
-            Dictionary<string, ParameterizedThreadStart> azioni = new Dictionary<string, ParameterizedThreadStart>
+            if (actions.TryGetValue(chiave, out var action))
             {
-                //{ "a", new ParameterizedThreadStart(a) }
-            };
-
-            if (azioni.ContainsKey(chiave))
-            {
-                Thread thread = new Thread(azioni[chiave]);
-                thread.Start(parametro);
+                await action(parametro);
             }
             else
             {
-                Console.WriteLine($"Nessuna azione trovata per '{chiave}'");
+                Console.WriteLine($"Nessuna azione trovata per {chiave}");
             }
         }
+        async Task AggiornaPlayers()
+        {
+            while (true)
+            {
+                try
+                {
+                    string statoGiocatori = $"pos{players[0].pos.X}{players[0].width}{players[1].pos.X}{players[1].width}{ball.pos.X}{ball.pos.Y}{ball.r}";
+
+                    foreach (var player in players)
+                    {
+                        if (player.client.Connected)
+                        {
+                            Write(player.client.GetStream(), statoGiocatori);
+                        }
+                    }
+
+                    await Task.Delay(50); // 50ms per aggiornamenti fluidi
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Errore nell'aggiornamento dello stato: " + ex.Message);
+                }
+            }
+        }
+
     }
 }
