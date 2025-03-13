@@ -13,6 +13,7 @@ namespace server
     {
         public int n;
 
+        public int distance = 300;
         public TcpClient client;
         public Vector2f pos = new Vector2f();
         public int width = 1;
@@ -21,6 +22,10 @@ namespace server
         {
             this.client = client;
             this.n = n;
+            if (n == 0)
+                pos = new Vector2f(0, distance);
+            else
+                pos = new Vector2f(0, -distance);
         }
     }
 }

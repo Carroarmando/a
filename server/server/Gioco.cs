@@ -10,22 +10,27 @@ namespace server
 {
     internal class Gioco
     {
-        Dictionary<string, Func<string, Task>> actions = new Dictionary<string, Func<string, Task>>
-        {
-            //{ "aaa", a },
-        };
+        Dictionary<string, Func<string, Task>> actions;
 
+        private object[] playerLocks = new object[2] { new object(), new object() };
         Player[] players = new Player[2];
+
         Ball ball = new Ball();
         public Gioco(TcpClient[] clients)
         {
             if(clients.Length == 2)
             {
+                actions = new Dictionary<string, Func<string, Task>>
+                {
+                    { "pos", pos }
+                };
+
                 players[0] = new Player(clients[0], 0);
                 players[1] = new Player(clients[1], 1);
                 Task.Run(() => HandleClient(players[0]));
                 Task.Run(() => HandleClient(players[1]));
-                AggiornaPlayers();
+
+                Task.Run(AggiornaPlayers);
             }
         }
         void Write(NetworkStream stream, string messageString)
@@ -45,7 +50,7 @@ namespace server
                 Console.WriteLine($"Errore nell'invio del messaggio {messageString}: " + ex.Message);
             }
         }
-        void HandleClient(Player player)
+        async Task HandleClient(Player player)
         {
             try
             {
@@ -56,7 +61,10 @@ namespace server
                 while (true)
                 {
                     byte[] lunghezzaBytes = new byte[4];
-                    stream.Read(lunghezzaBytes, 0, 4);
+                    int bytesRead = await stream.ReadAsync(lunghezzaBytes, 0, 4);
+
+                    if (bytesRead == 0) // Client disconnesso
+                        break;
 
                     int lunghezza = BitConverter.ToInt32(lunghezzaBytes, 0); // Converte i byte in int
                     byte[] dati = new byte[lunghezza];
@@ -64,10 +72,14 @@ namespace server
                     // Assicura di leggere tutto il messaggio
                     int letti = 0;
                     while (letti < lunghezza)
-                        letti += stream.Read(dati, letti, lunghezza - letti);
+                    {
+                        int read = await stream.ReadAsync(dati, letti, lunghezza - letti);
+                        if (read == 0) break; // Disconnessione
+                        letti += read;
+                    }
 
                     string message = Encoding.UTF8.GetString(dati);
-                    AvviaAzione(message.Substring(0, 3), message.Substring(3));
+                    Task.Run(() => AvviaAzione(message.Substring(0, 3), message.Substring(3)));
                 }
             }
             catch (Exception ex)
@@ -78,13 +90,9 @@ namespace server
         async Task AvviaAzione(string chiave, string parametro)
         {
             if (actions.TryGetValue(chiave, out var action))
-            {
-                await action(parametro);
-            }
+                action(parametro);
             else
-            {
                 Console.WriteLine($"Nessuna azione trovata per {chiave}");
-            }
         }
         async Task AggiornaPlayers()
         {
@@ -101,15 +109,24 @@ namespace server
                             Write(player.client.GetStream(), statoGiocatori);
                         }
                     }
-
-                    await Task.Delay(50); // 50ms per aggiornamenti fluidi
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine("Errore nell'aggiornamento dello stato: " + ex.Message);
                 }
+
+                await Task.Delay(50); // 50ms per aggiornamenti fluidi
             }
         }
-
+        async Task pos(string s)
+        {
+            int index = Convert.ToInt32(s[0].ToString());
+            lock (playerLocks[index])
+            {
+                Player p = players[index];
+                int x = Convert.ToInt32(s.Substring(1));
+                p.pos = new SFML.System.Vector2f(x, p.pos.Y);
+            }
+        }
     }
 }
